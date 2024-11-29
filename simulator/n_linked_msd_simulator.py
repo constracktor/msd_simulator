@@ -1,19 +1,35 @@
+import os
+import json
 import numpy as np
 import scipy.integrate as integrate
 import scipy.interpolate as interp
+import matplotlib
+import matplotlib.pyplot as plt
 
-class msd_chain():
-    def __init__(self, N=5, noise_sd=0.05):
-        # Model parameters
-        self.k = np.linspace(1.0, 0.5, N)
-        self.c = 0.5 * np.linspace(0.5, 1.0, N)
-        self.m = 0.5 * np.linspace(0.5, 1, N)
+class n_linked_msd_simulator():
+    def __init__(self, config_filepath):
+        # Open config
+        config = self.get_config(config_filepath)        # Number of samples to generate
+        self.n_samples = config["N_SAMPLES"]
+        # Sampling frequency
+        self.f_sample = config["SAMPLING_FREQUENCY"]
         # Measurement noise
-        self.noise_sd = noise_sd
-        # Number of charts
-        self.N = N
+        self.noise_sd = config["NOISE"]
+        # Number of carts
+        self.N = config["N_CARTS"]
+
+        self.signal = config["SIGNAL"]
+        self.amplitude = config["AMPLITUDE"] # aprbs=2.0; sinus=4.0
+        self.period = config["PERIOD"]       # aprbs=300; sinus=5
+        
+        # Model parameters
+        self.k = np.linspace(1.0, 0.5, self.N)
+        self.c = 0.5 * np.linspace(0.5, 1.0, self.N)
+        self.m = 0.5 * np.linspace(0.5, 1, self.N)
         # Spring travel
         self.travel = 2
+        # Random seed for reproducibility
+        np.random.seed(config["RANDOM_SEED"])
 
     # For displacements x, returns the spring force
     def spring_func(self, x):
@@ -53,9 +69,9 @@ class msd_chain():
         dxdt[1::2] = F / m[:, None]
         return dxdt
 
-    def simulate(self, u, f_sample=0.1):
+    def simulate(self, u):
         T = u.size
-        Tend = f_sample * T
+        Tend = self.f_sample * T
         time = np.linspace(0, Tend, T)
         u_interp = interp.interp1d(time, u)
 
@@ -72,11 +88,9 @@ class msd_chain():
         # Add noise
         Y = Y + (np.random.normal(0, self.noise_sd, Y.shape))
         return Y
-
+    
     #  Generate a piecewise constant input with randomly varying period and magnitude
-    def aprbs_signal(self, T, amplitude=1, period=50, random_seed=None):
-        #np.random.seed(random_seed)
-
+    def aprbs_signal(self, T, amplitude=1, period=50):
         u_per = []
         while(sum(u_per) < T):
             u_per += [int((period * np.random.rand()))]
@@ -88,7 +102,7 @@ class msd_chain():
         return u.reshape(1,-1)[0]
 
     # Generate a multisine input with randomly varying period and amplitude
-    def multisine_signal(self, T, amplitude=2, period=10, random_seed=None):
+    def multisine_signal(self, T, amplitude=2, period=10):
         samples = np.linspace(0,T,T)
         n_sinus = 40
         amplitudes = amplitude * np.random.rand(n_sinus)
@@ -99,3 +113,31 @@ class msd_chain():
             signal = signal + amplitudes[i] * np.sin(np.pi * periods[i] * samples + offset[i])
         signal = signal / n_sinus
         return signal
+
+    def generate_input(self):
+        if (self.signal == "aprbs"):
+            return self.aprbs_signal(self.n_samples, self.amplitude, self.period)
+        else: # config["SIGNAL"] == "sinus"
+            return self.multisine_signal(self.n_samples, self.amplitude, self.period)
+    
+    def write_data(self, filepath, data):
+        # Ensure directory exists
+        os.makedirs(filepath[:filepath.rfind("/")], exist_ok=True)
+        file = open(filepath, "w")
+        for value in data:
+            file.write(str(value) + "\n")
+        file.close()
+
+    def plot_data(self, data, label):
+        time = np.linspace(0, self.f_sample*self.n_samples, self.n_samples)
+        plt.figure(figsize=(10,4))
+        plt.plot(time, data, 'k', linewidth=1)
+        plt.ylabel("Position")
+        plt.xlabel("Time")
+        plt.title(label)
+        # Ensure directory exists
+        os.makedirs("plots", exist_ok=True)
+        plt.savefig('./plots/' + label + '.pdf', bbox_inches='tight')
+
+    def get_config(self, filepath):
+        return json.load(open(filepath))
